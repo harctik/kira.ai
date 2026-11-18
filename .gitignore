@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+.ipynb_checkpoints/
+
+# Models & Weights
+*.bin
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# Data & Corpora
+data/
+*.txt
+*.csv
+*.parquet
+*.jsonl
