@@ -36,3 +36,4 @@ def test_evolution_engine_memory_lifecycle(tmp_path):
 
     assert engine.profile["total_interactions"] == 0
     assert os.path.exists(str(mem_dir))
+
