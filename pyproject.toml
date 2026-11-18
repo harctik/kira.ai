@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kira-ai"
+version = "0.1.0"
+description = "Autonomous self-evolving local AI architecture"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Avvari Naga Harthikanand", email = "harthikanand90@gmail.com" }
+]
+keywords = ["pytorch", "transformer", "llm", "ai-agent", "deep-learning"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
