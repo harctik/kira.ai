@@ -82,6 +82,8 @@ class EvolutionEngine:
                     except ValueError:
                         continue
                     answer = e.get("feedback") or e.get("response") or ""
+                    if answer.startswith("From what I have indexed"):
+                        continue  # don't recall our own retrieval dumps
                     idx.add({"text": f"User: {e.get('prompt', '')}\nKira: {answer}", "kind": "interaction"})
         return idx.search(query, k=k)
 
