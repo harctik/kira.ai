@@ -20,7 +20,7 @@ The architecture partitions into four functional subsystems surrounding a modern
 
 1. Human Knowledge Engine: Curates verified human-written Python, PyTorch, and algorithms code without synthetic contamination.
 2. Local Document Indexer: Offline semantic indexer and retrieval-augmented generation engine operating over private local files.
-3. Operating System Bridge: Sandboxed execution layer for terminal commands, hardware monitoring, and cross-device local network communication.
+3. Operating System Bridge: Token-protected local bridge for hardware monitoring and cross-device local network communication. It binds to localhost by default, and raw terminal command execution is off unless you start the server with `KIRA_ALLOW_SHELL=1`. This is access control, not a sandbox.
 4. Continuous Evolution Engine: Consolidates user feedback and coding interactions into permanent episodic memory for ongoing fine-tuning exports.
 
 ---
@@ -100,7 +100,12 @@ pytest tests/ -v
 ### 3. Launch Local Network Bridge
 ```bash
 python server.py
-# Access http://localhost:8080 in your browser
+# Open the URL it prints (it ends in #token=...) in your browser
+
+# To reach it from your phone on the same Wi-Fi (anyone with the token can use it):
+KIRA_HOST=0.0.0.0 python server.py
+# To allow the "run:" shell command (dangerous, leave off unless you need it):
+KIRA_ALLOW_SHELL=1 python server.py
 ```
 
 ---

@@ -6,12 +6,27 @@ Zero extra dependencies required (uses Python standard library http.server).
 
 import os
 import json
+import hmac
 import socket
+import secrets
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from tools import LaptopTools
 from evolution import EvolutionEngine
 
 evolution = EvolutionEngine(memory_dir="memory")
+
+# Security model:
+#  - Binds to 127.0.0.1 unless KIRA_HOST is set (e.g. KIRA_HOST=0.0.0.0 for phone access).
+#  - Every /api/* call needs the secret token (header X-Kira-Token). Set KIRA_TOKEN or one is
+#    generated per start and printed in the console.
+#  - Raw shell execution ("run:") is OFF unless KIRA_ALLOW_SHELL=1.
+MAX_BODY_BYTES = 16 * 1024
+AUTH_TOKEN = os.environ.get("KIRA_TOKEN") or secrets.token_urlsafe(24)
+ALLOW_SHELL = os.environ.get("KIRA_ALLOW_SHELL") == "1"
+
+
+def token_ok(supplied: str) -> bool:
+    return bool(supplied) and hmac.compare_digest(supplied.encode("utf-8"), AUTH_TOKEN.encode("utf-8"))
 
 
 def get_local_ip():
@@ -79,6 +94,8 @@ HTML_UI = """<!DOCTYPE html>
 </footer>
 
 <script>
+// Token comes from the URL fragment (#token=...), which is never sent to the server.
+const TOKEN = new URLSearchParams(location.hash.slice(1)).get("token") || "";
 async function sendMessage() {
   const input = document.getElementById("userInput");
   const msg = input.value.trim();
@@ -91,13 +108,17 @@ async function sendMessage() {
   try {
     const res = await fetch("/api/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "X-Kira-Token": TOKEN },
       body: JSON.stringify({ message: msg })
     });
     const data = await res.json();
-    botDiv.innerHTML = data.reply;
+    if (!res.ok) { botDiv.textContent = data.error || ("Request failed: " + res.status); return; }
+    botDiv.textContent = data.reply;
     if (data.tool_output) {
-      botDiv.innerHTML += `<div class="tool-output">${data.tool_output}</div>`;
+      const out = document.createElement("div");
+      out.className = "tool-output";
+      out.textContent = data.tool_output;
+      botDiv.appendChild(out);
     }
   } catch (err) {
     botDiv.textContent = "Error communicating with Kira: " + err;
@@ -125,28 +146,50 @@ function appendMessage(text, sender) {
 
 
 class KiraServerHandler(BaseHTTPRequestHandler):
+    def _send_json(self, code, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authorized(self) -> bool:
+        if token_ok(self.headers.get("X-Kira-Token", "")):
+            return True
+        self._send_json(401, {"error": "Missing or invalid token."})
+        return False
+
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(HTML_UI.encode("utf-8"))
         elif self.path == "/api/status":
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            status = LaptopTools.get_system_status()
-            self.wfile.write(json.dumps(status).encode("utf-8"))
+            if not self._authorized():
+                return
+            self._send_json(200, LaptopTools.get_system_status())
         else:
             self.send_response(404)
             self.end_headers()
 
     def do_POST(self):
         if self.path == "/api/chat":
-            content_length = int(self.headers.get("Content-Length", 0))
-            post_data = self.rfile.read(content_length)
-            req = json.loads(post_data.decode("utf-8"))
-            user_msg = req.get("message", "").strip()
+            if not self._authorized():
+                return
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                return self._send_json(400, {"error": "Bad Content-Length."})
+            if content_length < 0 or content_length > MAX_BODY_BYTES:
+                return self._send_json(413, {"error": "Request too large."})
+            try:
+                req = json.loads(self.rfile.read(content_length).decode("utf-8"))
+                user_msg = str(req.get("message", "")).strip()
+            except (ValueError, AttributeError):
+                return self._send_json(400, {"error": "Invalid JSON body."})
 
             reply = ""
             tool_output = None
@@ -167,29 +210,36 @@ class KiraServerHandler(BaseHTTPRequestHandler):
                 tool_output = summary
             elif lower_msg.startswith("run:"):
                 cmd = user_msg[4:].strip()
-                reply = f"Executed shell command: `{cmd}`"
-                tool_output = LaptopTools.execute_shell(cmd)
+                if ALLOW_SHELL:
+                    reply = f"Executed shell command: `{cmd}`"
+                    tool_output = LaptopTools.execute_shell(cmd)
+                else:
+                    reply = "Shell execution is disabled. Start the server with KIRA_ALLOW_SHELL=1 to enable it."
             else:
                 reply = f"Kira received: \"{user_msg}\". Ready for local model generation or OS command."
 
             # Log interaction to evolution engine
             evolution.log_interaction(user_msg, reply + ("\n" + tool_output if tool_output else ""))
 
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
+            self._send_json(200, {"reply": reply, "tool_output": tool_output})
+        else:
+            self.send_response(404)
             self.end_headers()
-            self.wfile.write(json.dumps({"reply": reply, "tool_output": tool_output}).encode("utf-8"))
 
 
-def start_server(port: int = 8080):
-    ip = get_local_ip()
-    server_address = ("0.0.0.0", port)
-    httpd = HTTPServer(server_address, KiraServerHandler)
+def start_server(port: int = 8080, host: str = None):
+    host = host or os.environ.get("KIRA_HOST", "127.0.0.1")
+    httpd = HTTPServer((host, port), KiraServerHandler)
 
     print("=" * 60)
     print("  KIRA MOBILE & LAPTOP BRIDGE SERVER")
-    print(f"  Laptop URL:  http://localhost:{port}")
-    print(f"  Mobile URL:  http://{ip}:{port}  (Open this on your phone!)")
+    print(f"  Laptop URL:  http://localhost:{port}/#token={AUTH_TOKEN}")
+    if host in ("0.0.0.0", "::"):
+        print(f"  Mobile URL:  http://{get_local_ip()}:{port}/#token={AUTH_TOKEN}")
+        print("  WARNING: reachable by every device on your network; keep the token private.")
+    else:
+        print(f"  Bound to {host} only. Set KIRA_HOST=0.0.0.0 to allow your phone.")
+    print(f"  Shell execution: {'ENABLED' if ALLOW_SHELL else 'disabled (set KIRA_ALLOW_SHELL=1)'}")
     print("=" * 60)
     print("Press Ctrl+C to stop the server.")
 
