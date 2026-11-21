@@ -115,6 +115,15 @@ python server.py                                      # chat; "remember: ..." st
 ```
 Each question recalls taught facts and past chats, searches the indexed files, and hands the context to a generation backend chosen with `KIRA_BACKEND`: `extractive` (default, quotes the retrieved text, no model), `ollama` (a free local Ollama server, `KIRA_OLLAMA_MODEL`), or `kira` (your own checkpoint via `KIRA_CKPT`). Retrieval is keyword-based BM25, not semantic embeddings.
 
+### 5. Evaluation, Tools over MCP, Multi-Agent (all free)
+```bash
+python evaluate.py eval/golden.json --min-hit 0.75   # hit@k and MRR, no LLM judge; non-zero exit on regression
+python mcp_tools.py                                  # MCP stdio server for any MCP client
+```
+`mcp_tools.py` exposes only read-only tools (`get_system_status`, `read_file`, `list_directory`) confined to the current folder. `KIRA_MCP_ROOT` changes the folder and `KIRA_MCP_ALLOW=read_file,write_file` changes the allowlist. Shell and app launching are never exposed. It is an allowlist, not a sandbox.
+
+In chat, `research: <task>` runs a planner, retrieval-backed researchers and a writer (`agents.py`). With the default extractive backend this is rule-based; an Ollama or Kira backend makes each step model-driven.
+
 ---
 
 ## Author and Engineering Attribution

@@ -120,3 +120,12 @@ def test_oversized_body_returns_413(base_url):
 def test_ui_does_not_use_innerhtml_for_replies():
     assert "innerHTML = data.reply" not in server.HTML_UI
     assert "innerHTML +=" not in server.HTML_UI
+
+
+def test_research_and_remember_commands(base_url, monkeypatch):
+    monkeypatch.setattr(server, "_doc_index", None)
+    monkeypatch.setattr(server, "INDEX_PATH", "nonexistent-index.json")
+    status, body = post(base_url, {"message": "remember: the codeword is plum"}, token="test-token")
+    assert status == 200 and "remember" in body["reply"].lower()
+    status, body = post(base_url, {"message": "research: what is the codeword"}, token="test-token")
+    assert status == 200 and "plum" in body["reply"] and "Plan" in body["tool_output"]

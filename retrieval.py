@@ -16,6 +16,7 @@ _STOPWORDS = frozenset(
     "a an and are as at be but by for from has have i in is it its of on or that the this to was were will with "
     "you your what who how why when where which do does did can could should would about into than then so".split()
 )
+SKIP_DIRS = {"__pycache__", "node_modules", "venv", ".git", "memory", "data", "out", "dist", "build"}
 TEXT_EXTENSIONS = {".txt", ".md", ".py", ".rst", ".json", ".yml", ".yaml", ".toml", ".js", ".ts", ".html", ".css"}
 
 
@@ -126,7 +127,17 @@ class DocumentIndex:
     def __len__(self) -> int:
         return len(self.index)
 
+    def remove_source(self, source: str) -> None:
+        """Drop every chunk from `source` (so re-indexing a file replaces it, never duplicates)."""
+        kept = [d for d in self.index.docs if d.get("source") != source]
+        if len(kept) != len(self.index.docs):
+            self.index = BM25Index()
+            for d in kept:
+                self.index.add(d)
+        self._sources.discard(source)
+
     def add_text(self, text: str, source: str, max_chars: int = 800) -> int:
+        self.remove_source(source)
         n = 0
         for i, chunk in enumerate(chunk_text(text, max_chars=max_chars)):
             self.index.add({"text": chunk, "source": source, "chunk": i})
@@ -146,11 +157,13 @@ class DocumentIndex:
     def add_directory(self, root: str, extensions: Iterable[str] = TEXT_EXTENSIONS) -> Dict[str, int]:
         exts = {e.lower() for e in extensions}
         files = chunks = 0
+        own = os.path.abspath(self.path) if self.path else None
         for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in {"__pycache__", "node_modules", "venv"}]
+            dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in SKIP_DIRS]
             for name in filenames:
-                if os.path.splitext(name)[1].lower() in exts:
-                    added = self.add_file(os.path.join(dirpath, name))
+                full = os.path.join(dirpath, name)
+                if os.path.splitext(name)[1].lower() in exts and os.path.abspath(full) != own:
+                    added = self.add_file(full)
                     if added:
                         files += 1
                         chunks += added

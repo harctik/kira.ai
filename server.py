@@ -234,6 +234,16 @@ class KiraServerHandler(BaseHTTPRequestHandler):
                     tool_output = LaptopTools.execute_shell(cmd)
                 else:
                     reply = "Shell execution is disabled. Start the server with KIRA_ALLOW_SHELL=1 to enable it."
+            elif lower_msg.startswith("research:"):
+                from agents import Orchestrator
+                task = user_msg[9:].strip()
+                if task:
+                    out = Orchestrator(get_assistant()).run(task)
+                    reply = out["final"]
+                    steps = [f"- {q}" for q in out["plan"]]
+                    tool_output = "Plan:" + chr(10) + chr(10).join(steps)
+                else:
+                    reply = "Give me a task, e.g. research: what is the auth header and how is memory stored?"
             elif lower_msg.startswith("remember:"):
                 fact = user_msg[9:].strip()
                 if fact:

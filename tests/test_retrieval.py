@@ -90,3 +90,24 @@ def test_assistant_survives_broken_backend(tmp_path):
     ev.teach_fact("note", "x", "the secret word is plum")
     out = Assistant(ev, DocumentIndex(), Broken()).ask("secret word")
     assert "plum" in out["answer"] and "failed" in out["answer"]
+
+
+def test_reindexing_replaces_instead_of_duplicating(tmp_path):
+    doc = tmp_path / "a.md"
+    doc.write_text("alpha beta gamma", encoding="utf-8")
+    idx = DocumentIndex()
+    idx.add_file(str(doc))
+    idx.add_file(str(doc))
+    assert len(idx) == 1
+    doc.write_text("delta epsilon", encoding="utf-8")
+    idx.add_file(str(doc))
+    assert len(idx) == 1 and idx.search("alpha") == []
+
+
+def test_directory_scan_skips_memory_data_and_own_index(tmp_path):
+    (tmp_path / "keep.md").write_text("keep this", encoding="utf-8")
+    for d in ("memory", "data"):
+        (tmp_path / d).mkdir()
+        (tmp_path / d / "skip.md").write_text("skip this", encoding="utf-8")
+    idx = DocumentIndex(str(tmp_path / "idx.json"))
+    assert idx.add_directory(str(tmp_path))["files"] == 1

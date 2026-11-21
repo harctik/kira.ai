@@ -1,0 +1,6 @@
+[
+  {"question": "which header carries the auth token", "expected": "X-Kira-Token"},
+  {"question": "how is the shell command enabled", "expected": "KIRA_ALLOW_SHELL"},
+  {"question": "what retrieval algorithm is used", "expected": "BM25"},
+  {"question": "where are interactions logged", "expected": "interactions.jsonl"}
+]
