@@ -87,7 +87,9 @@ def main():
     device_type = 'cuda' if 'cuda' in device else 'cpu'
 
     # Mixed precision setup
-    dtype = 'bfloat16' if (torch.cuda.is_available() and torch.cuda.is_bf16_supported()) else 'float16'
+    # bf16 is only fast on Ampere+ (compute capability >= 8); T4 emulates it slowly, so use fp16 there.
+    use_bf16 = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8 and torch.cuda.is_bf16_supported()
+    dtype = 'bfloat16' if use_bf16 else 'float16'
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
     ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
     scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
