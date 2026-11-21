@@ -36,7 +36,7 @@ def main():
     if not os.path.exists(args.ckpt):
         raise FileNotFoundError(f"Checkpoint {args.ckpt} not found! Please train the model first with train.py.")
 
-    checkpoint = torch.load(args.ckpt, map_location=device)
+    checkpoint = torch.load(args.ckpt, map_location=device, weights_only=False)
     config = checkpoint['config']
     model = GPT(config)
     model.load_state_dict(checkpoint['model'])

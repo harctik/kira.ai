@@ -125,7 +125,7 @@ def main():
     if args.init_from != "scratch":
         if os.path.exists(args.init_from):
             print(f"\n[CONTINUAL LEARNING] Loading weights from existing checkpoint: {args.init_from}...")
-            ckpt = torch.load(args.init_from, map_location=device)
+            ckpt = torch.load(args.init_from, map_location=device, weights_only=False)
             state_dict = ckpt['model']
             # Unwanted prefix _orig_mod. if compiled
             unwanted_prefix = '_orig_mod.'

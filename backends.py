@@ -51,7 +51,7 @@ class KiraBackend:
 
         self.torch = torch
         self.device = device
-        checkpoint = torch.load(ckpt, map_location=device)
+        checkpoint = torch.load(ckpt, map_location=device, weights_only=False)
         cfg = checkpoint["config"]
         self.model = GPT(cfg if isinstance(cfg, GPTConfig) else GPTConfig(**cfg))
         self.model.load_state_dict(checkpoint["model"])
