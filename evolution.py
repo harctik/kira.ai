@@ -67,6 +67,24 @@ class EvolutionEngine:
         self._save_profile()
         print(f"Kira learned: [{fact_category}] {key} = {value}")
 
+    def recall(self, query: str, k: int = 3) -> List[Dict]:
+        """Search taught facts and past interactions (BM25, local). Returns [{text, kind, score}]."""
+        from retrieval import BM25Index
+
+        idx = BM25Index()
+        for fact in self.profile.get("learned_facts", []):
+            idx.add({"text": f"{fact['category']} {fact['key']}: {fact['value']}", "kind": "fact"})
+        if os.path.exists(self.log_file):
+            with open(self.log_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        e = json.loads(line)
+                    except ValueError:
+                        continue
+                    answer = e.get("feedback") or e.get("response") or ""
+                    idx.add({"text": f"User: {e.get('prompt', '')}\nKira: {answer}", "kind": "interaction"})
+        return idx.search(query, k=k)
+
     def consolidate_memory(self):
         """Summarize all recent experiences into evolution notes"""
         if not os.path.exists(self.log_file):

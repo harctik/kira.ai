@@ -25,6 +25,25 @@ AUTH_TOKEN = os.environ.get("KIRA_TOKEN") or secrets.token_urlsafe(24)
 ALLOW_SHELL = os.environ.get("KIRA_ALLOW_SHELL") == "1"
 
 
+INDEX_PATH = os.path.join("memory", "index.json")
+_doc_index = None
+_backend = None
+
+
+def get_assistant():
+    """Lazily build the assistant; the index and backend are cached, memory is read fresh."""
+    global _doc_index, _backend
+    from assistant import Assistant
+    from backends import pick_backend
+    from retrieval import DocumentIndex
+
+    if _doc_index is None:
+        _doc_index = DocumentIndex(INDEX_PATH)
+    if _backend is None:
+        _backend = pick_backend()
+    return Assistant(evolution, _doc_index, _backend)
+
+
 def token_ok(supplied: str) -> bool:
     return bool(supplied) and hmac.compare_digest(supplied.encode("utf-8"), AUTH_TOKEN.encode("utf-8"))
 
@@ -215,8 +234,18 @@ class KiraServerHandler(BaseHTTPRequestHandler):
                     tool_output = LaptopTools.execute_shell(cmd)
                 else:
                     reply = "Shell execution is disabled. Start the server with KIRA_ALLOW_SHELL=1 to enable it."
+            elif lower_msg.startswith("remember:"):
+                fact = user_msg[9:].strip()
+                if fact:
+                    evolution.teach_fact("note", fact[:40], fact)
+                    reply = "Got it, I'll remember that."
+                else:
+                    reply = "Tell me what to remember, e.g. remember: my project deadline is Friday."
             else:
-                reply = f"Kira received: \"{user_msg}\". Ready for local model generation or OS command."
+                result = get_assistant().ask(user_msg)
+                reply = result["answer"]
+                if result["sources"]:
+                    tool_output = "Sources:\n" + "\n".join(dict.fromkeys(result["sources"]))
 
             # Log interaction to evolution engine
             evolution.log_interaction(user_msg, reply + ("\n" + tool_output if tool_output else ""))

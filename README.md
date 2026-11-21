@@ -108,6 +108,13 @@ KIRA_HOST=0.0.0.0 python server.py
 KIRA_ALLOW_SHELL=1 python server.py
 ```
 
+### 4. Memory and Local Document Q&A (free, no API)
+```bash
+python index_docs.py path/to/notes path/to/project   # build the BM25 index (memory/index.json)
+python server.py                                      # chat; "remember: ..." stores a fact
+```
+Each question recalls taught facts and past chats, searches the indexed files, and hands the context to a generation backend chosen with `KIRA_BACKEND`: `extractive` (default, quotes the retrieved text, no model), `ollama` (a free local Ollama server, `KIRA_OLLAMA_MODEL`), or `kira` (your own checkpoint via `KIRA_CKPT`). Retrieval is keyword-based BM25, not semantic embeddings.
+
 ---
 
 ## Author and Engineering Attribution
