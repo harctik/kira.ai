@@ -13,6 +13,9 @@ from contextlib import nullcontext
 import numpy as np
 import torch
 
+import functools
+print = functools.partial(print, flush=True)  # live logs even when redirected to a file
+
 from model import GPTConfig, GPT
 
 
@@ -38,6 +41,8 @@ def parse_args():
     parser.add_argument("--grad-clip", type=float, default=1.0, help="Gradient clipping norm")
     
     # Initialization and checkpoint loading
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from <out-dir>/ckpt.pt (model, optimizer, iteration) if it exists")
     parser.add_argument("--init-from", type=str, default="scratch",
                         help="'scratch' to start from zero, or path to a checkpoint (e.g. 'out/ckpt.pt') to continue/fine-tune")
     
@@ -63,10 +68,14 @@ def get_model_config(model_size, block_size, vocab_size):
         raise ValueError(f"Unknown model size: {model_size}")
 
 
-def get_batch(data, batch_size, block_size, device, device_type):
-    ix = torch.randint(len(data) - block_size, (batch_size,))
+def get_batch(data, batch_size, block_size, device, device_type, mask=None):
+    ix = torch.randint(len(data) - block_size - 1, (batch_size,))
     x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
     y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
+    if mask is not None:
+        # SFT: only learn from the assistant's reply tokens (mask==1); -1 is ignored by the loss
+        m = torch.stack([torch.from_numpy((mask[i+1:i+1+block_size]).astype(np.bool_)) for i in ix])
+        y = torch.where(m, y, torch.full_like(y, -1))
     if device_type == 'cuda':
         # Pin arrays x,y, which allows us to move them to GPU asynchronously (non_blocking=True)
         x, y = x.pin_memory().to(device, non_blocking=True), y.pin_memory().to(device, non_blocking=True)
@@ -92,7 +101,7 @@ def main():
     dtype = 'bfloat16' if use_bf16 else 'float16'
     ptdtype = {'float32': torch.float32, 'bfloat16': torch.bfloat16, 'float16': torch.float16}[dtype]
     ctx = nullcontext() if device_type == 'cpu' else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
-    scaler = torch.cuda.amp.GradScaler(enabled=(dtype == 'float16'))
+    scaler = torch.amp.GradScaler('cuda', enabled=(dtype == 'float16' and device_type == 'cuda'))
 
     print("=" * 60)
     print("  Kira LLM - Pre-Training (100% Human Dataset)")
@@ -117,6 +126,12 @@ def main():
 
     train_data = np.memmap(train_bin, dtype=np.uint16, mode='r')
     val_data = np.memmap(val_bin, dtype=np.uint16, mode='r')
+    train_mask = val_mask = None
+    tm, vm = os.path.join(args.data_dir, "train_mask.bin"), os.path.join(args.data_dir, "val_mask.bin")
+    if os.path.exists(tm) and os.path.exists(vm):
+        train_mask = np.memmap(tm, dtype=np.uint8, mode='r')
+        val_mask = np.memmap(vm, dtype=np.uint8, mode='r')
+        print("Loss mask found: training only on assistant reply tokens.")
     print(f"Training tokens:   {len(train_data):,}")
     print(f"Validation tokens: {len(val_data):,}")
 
@@ -167,10 +182,10 @@ def main():
     def estimate_loss():
         out = {}
         model.eval()
-        for split, data in [('train', train_data), ('val', val_data)]:
+        for split, data, msk in [('train', train_data, train_mask), ('val', val_data, val_mask)]:
             losses = torch.zeros(args.eval_iters)
             for k in range(args.eval_iters):
-                X, Y = get_batch(data, args.batch_size, config.block_size, device, device_type)
+                X, Y = get_batch(data, args.batch_size, config.block_size, device, device_type, msk)
                 with ctx:
                     _, loss = model(X, Y)
                 losses[k] = loss.item()
@@ -179,37 +194,51 @@ def main():
         return out
 
     # 5. Training Loop
-    print("\nStarting training loop...")
+    start_iter = 1
     best_val_loss = float('inf')
+    ckpt_path = os.path.join(args.out_dir, "ckpt.pt")
+    best_path = os.path.join(args.out_dir, "best.pt")
+    if args.resume and os.path.exists(ckpt_path):
+        ck = torch.load(ckpt_path, map_location=device, weights_only=False)
+        model.load_state_dict(ck['model'])
+        optimizer.load_state_dict(ck['optimizer'])
+        if 'scaler' in ck and scaler.is_enabled():
+            scaler.load_state_dict(ck['scaler'])
+        start_iter = ck['iter_num'] + 1
+        best_val_loss = ck.get('best_val_loss', float('inf'))
+        print(f"[RESUME] Continuing from iteration {start_iter} (best val {best_val_loss:.4f})")
+        del ck
+    print("\nStarting training loop...")
     t0 = time.time()
 
-    for iter_num in range(1, args.max_iters + 1):
+    def save_ckpt(path, it, val):
+        torch.save({'model': model.state_dict(), 'optimizer': optimizer.state_dict(),
+                    'scaler': scaler.state_dict(), 'config': config, 'iter_num': it,
+                    'best_val_loss': val}, path + ".tmp")
+        os.replace(path + ".tmp", path)
+
+    for iter_num in range(start_iter, args.max_iters + 1):
         # Update learning rate
         lr = get_lr(iter_num)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
         # Evaluate periodically
-        if iter_num % args.eval_interval == 0 or iter_num == 1:
+        if iter_num % args.eval_interval == 0 or iter_num == start_iter or iter_num == args.max_iters:
             losses = estimate_loss()
             print(f"Step {iter_num:5d} | Train Loss: {losses['train']:.4f} | Val Loss: {losses['val']:.4f} | LR: {lr:.2e}")
-            if losses['val'] < best_val_loss or iter_num == args.max_iters:
+            if losses['val'] < best_val_loss:
                 best_val_loss = losses['val']
-                checkpoint = {
-                    'model': model.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'config': config,
-                    'iter_num': iter_num,
-                    'best_val_loss': best_val_loss,
-                }
-                ckpt_path = os.path.join(args.out_dir, "ckpt.pt")
-                torch.save(checkpoint, ckpt_path)
-                print(f"  >>> Saved best checkpoint to {ckpt_path} (val_loss: {best_val_loss:.4f})")
+                save_ckpt(best_path, iter_num, best_val_loss)
+                print(f"  >>> New best val loss {best_val_loss:.4f} -> {best_path}")
+            # Always keep the latest state so a dropped session can --resume
+            save_ckpt(ckpt_path, iter_num, best_val_loss)
+            print(f"  >>> Saved checkpoint to {ckpt_path}")
 
         # Forward & Backward with Gradient Accumulation
         optimizer.zero_grad(set_to_none=True)
         for micro_step in range(args.gradient_accumulation_steps):
-            X, Y = get_batch(train_data, args.batch_size, config.block_size, device, device_type)
+            X, Y = get_batch(train_data, args.batch_size, config.block_size, device, device_type, train_mask)
             with ctx:
                 logits, loss = model(X, Y)
                 loss = loss / args.gradient_accumulation_steps

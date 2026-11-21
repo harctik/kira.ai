@@ -200,17 +200,35 @@ class GPT(nn.Module):
         return optimizer
 
     @torch.no_grad()
-    def generate(self, idx, max_new_tokens, temperature=0.8, top_k=40, eos_token_id=None):
+    def generate(self, idx, max_new_tokens, temperature=0.8, top_k=40, eos_token_id=None,
+                 repetition_penalty=1.0, top_p=None, stop_token_ids=None):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
+        repetition_penalty > 1 discourages tokens already generated; stop_token_ids end generation early.
         """
+        stop_ids = set(stop_token_ids or [])
+        if eos_token_id is not None:
+            stop_ids.add(eos_token_id)
+        prompt_len = idx.size(1)
         for _ in range(max_new_tokens):
             # Crop to block_size if context becomes too long
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             # Forward model to get logits
             logits, _ = self(idx_cond)
-            logits = logits[:, -1, :] / max(temperature, 1e-5)
+            logits = logits[:, -1, :].float()
+            if repetition_penalty and repetition_penalty != 1.0 and idx.size(1) > prompt_len:
+                seen = idx[:, prompt_len:]
+                score = torch.gather(logits, 1, seen)
+                score = torch.where(score < 0, score * repetition_penalty, score / repetition_penalty)
+                logits = logits.scatter(1, seen, score)
+            logits = logits / max(temperature, 1e-5)
+            if top_p is not None and top_p < 1.0:
+                sorted_logits, sorted_idx = torch.sort(logits, descending=True)
+                cum = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                remove = cum - F.softmax(sorted_logits, dim=-1) > top_p
+                sorted_logits[remove] = -float('Inf')
+                logits = torch.full_like(logits, -float('Inf')).scatter(1, sorted_idx, sorted_logits)
             # Optionally crop probabilities with top-k
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
@@ -222,7 +240,7 @@ class GPT(nn.Module):
             # Append sampled index to the running sequence
             idx = torch.cat((idx, idx_next), dim=1)
             # If EOS is reached, terminate early
-            if eos_token_id is not None and (idx_next == eos_token_id).all():
+            if stop_ids and all(t.item() in stop_ids for t in idx_next[:, 0]):
                 break
 
         return idx

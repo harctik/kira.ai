@@ -18,6 +18,8 @@ def parse_args():
                         help="'chat' for conversational turn-taking, 'complete' for raw text completion")
     parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
     parser.add_argument("--top-k", type=int, default=40, help="Top-k sampling cutoff")
+    parser.add_argument("--repetition-penalty", type=float, default=1.15, help="Penalty for repeating tokens (1.0 = off)")
+    parser.add_argument("--top-p", type=float, default=0.9, help="Nucleus sampling cutoff (1.0 = off)")
     parser.add_argument("--max-tokens", type=int, default=256, help="Maximum new tokens to generate")
     parser.add_argument("--device", type=str, default="auto", help="'auto', 'cuda', or 'cpu'")
     return parser.parse_args()
@@ -84,7 +86,10 @@ def main():
                 max_new_tokens=args.max_tokens,
                 temperature=args.temperature,
                 top_k=args.top_k,
-                eos_token_id=eot_id
+                eos_token_id=eot_id,
+                repetition_penalty=args.repetition_penalty,
+                top_p=args.top_p,
+                stop_token_ids=[i for i in (tokenizer.token_to_id("<|user|>"), bot_id) if i is not None],
             )
 
         # Slice off prompt tokens to only decode the response

@@ -133,20 +133,30 @@ def main():
     train_samples = samples[num_val:]
 
     def tokenize_all(dataset_samples, desc):
-        all_ids = []
+        """Returns (token ids, loss mask). Mask is 1 only on the assistant reply (+ end token)."""
+        all_ids, all_mask = [], []
+        marker = "\n<|bot|>\n"
         for text in tqdm(dataset_samples, desc=desc):
-            ids = tokenizer.encode(text).ids
-            all_ids.extend(ids)
-        return np.array(all_ids, dtype=np.uint16)
+            cut = text.find(marker)
+            if cut < 0:
+                continue
+            cut += len(marker)
+            prefix_ids = tokenizer.encode(text[:cut]).ids
+            reply_ids = tokenizer.encode(text[cut:]).ids
+            all_ids.extend(prefix_ids + reply_ids)
+            all_mask.extend([0] * len(prefix_ids) + [1] * len(reply_ids))
+        return np.array(all_ids, dtype=np.uint16), np.array(all_mask, dtype=np.uint8)
 
-    val_tokens = tokenize_all(val_samples, "Tokenizing SFT validation")
-    train_tokens = tokenize_all(train_samples, "Tokenizing SFT training")
+    val_tokens, val_mask = tokenize_all(val_samples, "Tokenizing SFT validation")
+    train_tokens, train_mask = tokenize_all(train_samples, "Tokenizing SFT training")
 
     train_bin = os.path.join(args.output_dir, "train.bin")
     val_bin = os.path.join(args.output_dir, "val.bin")
 
     train_tokens.tofile(train_bin)
     val_tokens.tofile(val_bin)
+    train_mask.tofile(os.path.join(args.output_dir, "train_mask.bin"))
+    val_mask.tofile(os.path.join(args.output_dir, "val_mask.bin"))
 
     print("\n" + "=" * 60)
     print("  SFT DATA PREPARATION COMPLETE!")
