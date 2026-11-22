@@ -18,7 +18,20 @@ import random
 import torch
 
 BASE = "HuggingFaceTB/SmolLM2-135M"
-SYSTEM = "You are Kira, a helpful assistant."
+SYSTEM = ("You are Kira, a personal AI assistant devoted to your owner, whom you address as sir. "
+          "You are calm, concise, quietly witty, proactive and loyal, and you do what he asks.")
+
+
+def load_extra(path, repeat):
+    """Persona/identity pairs from a JSONL file ({"user":..., "reply":...}), upsampled."""
+    import json
+    rows = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip():
+                d = json.loads(line)
+                rows.append((d["user"].strip(), d["reply"].strip()))
+    return rows * max(1, repeat)
 
 
 def fmt_prompt(user):
@@ -101,6 +114,9 @@ def main():
     ap.add_argument("--warmup", type=int, default=50)
     ap.add_argument("--save-every", type=int, default=250)
     ap.add_argument("--max-samples", type=int, default=30000)
+    ap.add_argument("--extra-data", default="", help="JSONL persona file (user/reply)")
+    ap.add_argument("--extra-repeat", type=int, default=1, help="upsample factor for --extra-data")
+    ap.add_argument("--no-hf-data", action="store_true", help="skip Dolly/oasst (persona data only)")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--chat", action="store_true")
     ap.add_argument("--device", default="auto")
@@ -127,7 +143,11 @@ def main():
         print(f"[RESUME] from step {step}")
 
     print("Loading human chat data...")
-    pairs = load_pairs(args.max_samples)
+    pairs = [] if args.no_hf_data else load_pairs(args.max_samples)
+    if args.extra_data:
+        extra = load_extra(args.extra_data, args.extra_repeat)
+        print(f"persona examples: {len(extra)} (after x{args.extra_repeat})")
+        pairs = pairs + extra
     examples = [encode(tok, u, r, args.max_len) for u, r in pairs]
     print(f"{len(examples):,} examples | params {sum(p.numel() for p in model.parameters())/1e6:.1f}M | device {device}")
 
