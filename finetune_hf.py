@@ -117,6 +117,8 @@ def main():
     ap.add_argument("--extra-data", default="", help="JSONL persona file (user/reply)")
     ap.add_argument("--extra-repeat", type=int, default=1, help="upsample factor for --extra-data")
     ap.add_argument("--no-hf-data", action="store_true", help="skip Dolly/oasst (persona data only)")
+    ap.add_argument("--lora", action="store_true", help="LoRA fine-tune (use for 1.7B on a T4); merged model saved to <out-dir>_merged")
+    ap.add_argument("--lora-r", type=int, default=64)
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--chat", action="store_true")
     ap.add_argument("--device", default="auto")
@@ -132,9 +134,24 @@ def main():
     resuming = args.resume and os.path.exists(state_path)
     src = args.out_dir if resuming else args.base
     tok = AutoTokenizer.from_pretrained(src)
-    model = AutoModelForCausalLM.from_pretrained(src, torch_dtype=torch.float32).to(device)
+    if args.lora:
+        # big models (1.7B) on a 15GB T4: frozen fp16 base + small trainable LoRA adapters (fp32)
+        from peft import LoraConfig, get_peft_model
+        model = AutoModelForCausalLM.from_pretrained(src, torch_dtype=torch.float16).to(device)
+        model.gradient_checkpointing_enable()
+        model.enable_input_require_grads()
+        model = get_peft_model(model, LoraConfig(
+            r=args.lora_r, lora_alpha=2 * args.lora_r, lora_dropout=0.05, task_type="CAUSAL_LM",
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]))
+        for p in model.parameters():
+            if p.requires_grad:
+                p.data = p.data.float()
+        model.print_trainable_parameters()
+    else:
+        model = AutoModelForCausalLM.from_pretrained(src, torch_dtype=torch.float32).to(device)
     model.train()
-    opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01, betas=(0.9, 0.95))
+    opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=0.01,
+                            betas=(0.9, 0.95))
     step = 0
     if resuming:
         st = torch.load(state_path, map_location=device, weights_only=False)
@@ -184,7 +201,7 @@ def main():
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
             scaler.unscale_(opt)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            torch.nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad], 1.0)
             scaler.step(opt)
             scaler.update()
             opt.zero_grad(set_to_none=True)
@@ -196,6 +213,12 @@ def main():
                 save()
             if step >= args.max_steps:
                 break
+    if args.lora:
+        merged = model.merge_and_unload().half()
+        mdir = args.out_dir.rstrip("/\\") + "_merged"
+        merged.save_pretrained(mdir)
+        tok.save_pretrained(mdir)
+        print(f"merged fp16 model -> {mdir}")
     print("Training finished.")
 
 
