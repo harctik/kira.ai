@@ -308,7 +308,7 @@ def build(name, seed=7, per_group_cap=5):
     if name:
         import re
         def addr(r):
-            if name.lower() in r.lower() or chr(10) in r or len(r) > 90:
+            if name.lower() in r.lower() or chr(10) in r or len(r) > 220:
                 return r
             m = re.search(r"([.!?])$", r)
             return (r[:m.start()] + f", {name}" + r[m.start():]) if m else r
