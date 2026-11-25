@@ -1,6 +1,6 @@
 # kira.ai: Autonomous Neural Architecture & Continuous Agent Engine
 
-A privacy-preserving neural model family and agent architecture designed strictly from scratch in PyTorch with zero synthetic AI contamination, featuring custom Byte-Pair Encoding (BPE), scalable decoder-only transformers from 15M to 3.2B parameters, dynamic INT8 CPU quantization, and continuous memory evolution.
+A privacy-preserving neural model family and agent architecture designed strictly from scratch in PyTorch with zero synthetic AI contamination, featuring custom Byte-Pair Encoding (BPE), scalable decoder-only transformers from 13.8M to 2.84B parameters, dynamic INT8 CPU quantization, and continuous memory evolution.
 
 ![kira.ai Banner](banner.png)
 
@@ -27,16 +27,15 @@ The architecture partitions into four functional subsystems surrounding a modern
 
 ## Model Scaling Specifications
 
-The architecture is implemented in `model_scale.py` across six scalable tiers:
+The architecture is implemented in `model_scale.py` as five presets (parameter counts measured with `python -m benchmarks.int8_cpu_latency`, weights tied, vocabulary 8,192):
 
-| Model Tier | Parameters | Hidden Dimension | Layers | Attention Heads | KV Heads (GQA) | Context Length | Target Runtime |
-|---|---|---|---|---|---|---|---|
-| Kira-Nano | 15M | 288 | 6 | 6 | 2 | 1,024 | Embedded / Raspberry Pi |
-| Kira-Micro | 30M | 384 | 8 | 6 | 2 | 2,048 | Ultra-low power CPU |
-| Kira-Small | 70M | 512 | 10 | 8 | 2 | 2,048 | Standard Laptop CPU |
-| Kira-Base | 300M | 1,024 | 16 | 16 | 4 | 4,096 | Laptop CPU (Quantized) |
-| Kira-Pro | 1.1B | 2,048 | 22 | 16 | 4 | 4,096 | Desktop / Workstation |
-| Kira-Max | 3.2B | 3,072 | 28 | 24 | 8 | 8,192 | Discrete GPU / Server |
+| Preset | Parameters | Hidden Dimension | Layers | Attention Heads | KV Heads (GQA) |
+|---|---|---|---|---|---|
+| `15m` | 13.8M | 384 | 6 | 6 | 6 (MHA) |
+| `125m` | 91.2M | 768 | 12 | 12 | 12 (MHA) |
+| `500m` | 272.6M | 1,024 | 24 | 16 | 4 |
+| `1b` | 985.7M | 2,048 | 22 | 16 | 4 |
+| `3b` | 2,843.9M | 3,072 | 28 | 24 | 8 |
 
 ### Mathematical Design Highlights
 
@@ -60,9 +59,7 @@ Validation loss trajectories demonstrate stable convergence during pre-training 
 ![Pre-Training Loss Convergence](docs/assets/loss_curve.png)
 
 ### 2. Runtime Benchmarks & Unit Tests
-Dynamic INT8 quantization achieves sub-15ms token latency on standard consumer laptop CPUs, reducing KV-cache memory pressure by four times through Grouped-Query Attention.
-
-![Terminal Verification & Benchmarks](docs/assets/terminal_tests.png)
+Dynamic INT8 quantization (`quantize_for_cpu`) was measured with `python -m benchmarks.int8_cpu_latency` (2 threads, 128-token context) on a 13th Gen Intel Core i7-1360P, using PyTorch 2.12.1 (CPU build) and Python 3.10.2 on Windows 11. Each run averages 15 forward passes after 3 warm-up passes. Over two runs, the 13.8M preset took 41-44 ms in FP32 and 27-29 ms in INT8 (about 1.5x speedup), and the 91.2M preset took 294-297 ms in FP32 and 145-147 ms in INT8 (about 2.0x speedup). Timings depend on hardware and system load, so rerun the benchmark on your own machine. The model has no KV cache yet, so each pass recomputes the full context.
 
 ---
 
