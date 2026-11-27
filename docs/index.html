@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>kira.ai: a small language model stack in PyTorch</title>
+<meta name="description" content="PyTorch code for training a small GPT with its own BPE tokenizer, a RoPE/SwiGLU transformer with presets from 13.8M to 2.84B parameters, and a few local laptop tools.">
+<meta name="theme-color" content="#000000">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@100..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="mark.svg" alt="" width="26" height="31">kira.ai</a>
+    <nav aria-label="Sections">
+      <a href="#models">Models</a>
+      <a href="#cpu">CPU timing</a>
+      <a href="#data">Data</a>
+      <a href="#tools">Local tools</a>
+      <a href="#run">Run it</a>
+      <a href="https://github.com/harctik/kira.ai">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+<div class="wrap hero">
+  <div>
+    <h1>A language model, built up from the <em>tokenizer.</em></h1>
+    <p>kira.ai is PyTorch code for training a byte-level BPE tokenizer and a small decoder-only transformer on public text datasets, plus a few tools that run on your own laptop.</p>
+    <div class="actions">
+      <a class="btn solid" href="https://github.com/harctik/kira.ai">Read the source</a>
+      <a class="btn" href="#run">Run it</a>
+    </div>
+  </div>
+  <figure><img src="mark.svg" alt="kira.ai mark" width="400" height="474"></figure>
+</div>
+
+<div class="status">
+  <div class="wrap"><p>Where it stands: this is code, not a released model. The repository does not include trained weights, a tokenizer file or training data.</p></div>
+</div>
+
+<section id="models">
+  <div class="wrap">
+    <h2>Two model files</h2>
+    <p class="lede">One is wired to training and chat today. The other holds the newer architecture and the larger presets.</p>
+    <div class="pair">
+      <article>
+        <span class="tag">USED BY train.py AND chat.py</span>
+        <h3><a href="https://github.com/harctik/kira.ai/blob/main/model.py">model.py</a></h3>
+        <p>A compact GPT in the nanoGPT style, with the token embedding and output weights tied.</p>
+        <dl>
+          <div><dt>Positions</dt><dd>Learned embeddings</dd></div>
+          <div><dt>Normalisation</dt><dd>LayerNorm</dd></div>
+          <div><dt>Feed-forward</dt><dd>GELU, 4x width</dd></div>
+          <div><dt>Attention</dt><dd>Causal multi-head</dd></div>
+          <div><dt>Train sizes</dt><dd>toy 1.90M, 15m 13.96M, 30m 29.63M (at 512 context, 8,192 vocabulary)</dd></div>
+        </dl>
+      </article>
+      <article>
+        <span class="tag">NOT YET CONNECTED TO train.py OR chat.py</span>
+        <h3><a href="https://github.com/harctik/kira.ai/blob/main/model_scale.py">model_scale.py</a></h3>
+        <p>A scalable transformer with a method for dynamic INT8 quantization of its linear layers.</p>
+        <dl>
+          <div><dt>Positions</dt><dd>Rotary (RoPE)</dd></div>
+          <div><dt>Normalisation</dt><dd>RMSNorm</dd></div>
+          <div><dt>Feed-forward</dt><dd>SwiGLU</dd></div>
+          <div><dt>Attention</dt><dd>Multi-head, grouped-query on the 500m preset and up</dd></div>
+          <div><dt>Presets</dt><dd>Five, listed below</dd></div>
+        </dl>
+      </article>
+    </div>
+
+    <div class="table">
+      <table>
+        <caption class="note" style="text-align:left;margin:0 0 12px">model_scale.py presets, vocabulary 8,192, tied weights counted once</caption>
+        <thead><tr><th scope="col">Preset</th><th scope="col">Parameters</th><th scope="col">Width</th><th scope="col">Layers</th><th scope="col">Heads / KV</th><th scope="col" class="opt">Context</th></tr></thead>
+        <tbody>
+          <tr><td>15m</td><td>13.8M</td><td>384</td><td>6</td><td>6 / 6</td><td class="opt">1,024</td></tr>
+          <tr><td>125m</td><td>91.2M</td><td>768</td><td>12</td><td>12 / 12</td><td class="opt">1,024</td></tr>
+          <tr><td>500m</td><td>272.6M</td><td>1,024</td><td>24</td><td>16 / 4</td><td class="opt">1,024</td></tr>
+          <tr><td>1b</td><td>985.7M</td><td>2,048</td><td>22</td><td>16 / 4</td><td class="opt">2,048</td></tr>
+          <tr><td>3b</td><td>2,843.9M</td><td>3,072</td><td>28</td><td>24 / 8</td><td class="opt">2,048</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Preset names are labels, so go by the parameter column. These are architecture sizes; a preset in this table has not necessarily been trained.</p>
+  </div>
+</section>
+
+<section id="cpu">
+  <div class="wrap">
+    <h2>INT8 on a laptop CPU</h2>
+    <p class="lede">Time for one forward pass over 128 tokens, 32-bit floating point against dynamic INT8, as recorded in the README. Midpoints of the ranges from two runs are drawn. Shorter is faster.</p>
+    <div class="runs">
+      <div>
+        <h3>15m preset, 13.8M</h3>
+        <div class="bar"><span>FP32</span><span><i style="--w:100%"></i></span><b>41–44 ms</b></div>
+        <div class="bar q"><span>INT8</span><span><i style="--w:66%"></i></span><b>27–29 ms</b></div>
+      </div>
+      <div>
+        <h3>125m preset, 91.2M</h3>
+        <div class="bar"><span>FP32</span><span><i style="--w:100%"></i></span><b>294–297 ms</b></div>
+        <div class="bar q"><span>INT8</span><span><i style="--w:49%"></i></span><b>145–147 ms</b></div>
+      </div>
+    </div>
+    <p class="note">Intel i7-1360P, 2 threads, PyTorch 2.12.1 (CPU), Python 3.10.2, Windows 11. 15 timed passes after 3 warm-ups. Each chart has its own scale. There is no KV cache, so this is not a tokens-per-second figure for text generation, and it says nothing about output quality. Reproduce it with <a href="https://github.com/harctik/kira.ai/blob/main/benchmarks/int8_cpu_latency.py"><code>python -m benchmarks.int8_cpu_latency</code></a>; your numbers will differ.</p>
+  </div>
+</section>
+
+<section id="data">
+  <div class="wrap">
+    <h2>From text to a checkpoint</h2>
+    <p class="lede">Data scripts stream or load public datasets from Hugging Face and write token files that the training loop memory-maps.</p>
+    <ol class="steps">
+      <li><a href="https://github.com/harctik/kira.ai/blob/main/prepare_data.py">prepare_data.py</a><p>Streams English Wikipedia (Project Gutenberg books are optional), trains an 8,192-token byte-level BPE tokenizer and writes <code>train.bin</code> and <code>val.bin</code>.</p></li>
+      <li><a href="https://github.com/harctik/kira.ai/blob/main/prepare_code_data.py">prepare_code_data.py</a><p>Tokenizes Stack Overflow questions and an instruction-style Python code dataset with that tokenizer. Check each dataset's card for how its text was produced.</p></li>
+      <li><a href="https://github.com/harctik/kira.ai/blob/main/ingest_cloned_repos.py">ingest_cloned_repos.py</a><p>Collects Python, Markdown and JSONL files from repositories you have cloned into one corpus and tokenizes it.</p></li>
+      <li><a href="https://github.com/harctik/kira.ai/blob/main/prepare_sft_data.py">prepare_sft_data.py</a><p>Formats Dolly 15k and English OpenAssistant (OASST1) pairs as user and bot turns for fine-tuning.</p></li>
+      <li><a href="https://github.com/harctik/kira.ai/blob/main/train.py">train.py</a><p>Trains <code>model.py</code> with AdamW, warm-up and cosine decay, gradient accumulation and clipping, mixed precision on a GPU, and saves the checkpoint with the best validation loss.</p></li>
+      <li><a href="https://github.com/harctik/kira.ai/blob/main/chat.py">chat.py</a><p>Loads a checkpoint and tokenizer for chat or raw completion with temperature and top-k sampling.</p></li>
+    </ol>
+  </div>
+</section>
+
+<section id="tools">
+  <div class="wrap">
+    <h2>Local tools</h2>
+    <p class="lede">Separate from the model: these are ordinary Python utilities. The web bridge matches keywords to actions and does not generate text with a model.</p>
+    <div class="tools">
+      <article><h3>Laptop actions</h3><p>Run shell commands, read, write and list files, open apps or links, and report CPU, memory, disk and battery use.</p><a href="https://github.com/harctik/kira.ai/blob/main/tools.py">tools.py</a></article>
+      <article><h3>Web bridge</h3><p>A standard-library HTTP server with a small chat page, reachable from the laptop or a phone on the same network, on port 8080.</p><a href="https://github.com/harctik/kira.ai/blob/main/server.py">server.py</a></article>
+      <article><h3>Document search</h3><p>Splits text and code files into chunks and ranks them by shared keywords. It runs offline, is not a semantic or embedding search, and is not yet connected to chat. Its file types include <code>.env</code>, so choose folders with care.</p><a href="https://github.com/harctik/kira.ai/blob/main/personal_data.py">personal_data.py</a></article>
+      <article><h3>Interaction memory</h3><p>Logs exchanges to local files, writes a summary note and can export prompt and response pairs. It does not update model weights.</p><a href="https://github.com/harctik/kira.ai/blob/main/evolution.py">evolution.py</a></article>
+    </div>
+    <div class="warn">
+      <h3>Before you start the server</h3>
+      <p>It listens on every network interface with no login, and a chat message beginning with <code>run:</code> is executed as a shell command. There is no sandbox. Anyone who can reach port 8080 can control the machine, so do not run it on a shared or untrusted network.</p>
+    </div>
+  </div>
+</section>
+
+<section id="run">
+  <div class="wrap">
+    <h2>Run it</h2>
+    <p class="lede">Python 3.10 or newer. Install the packages the code imports, then run the tests. The three tests cover the shell and file tools and memory start-up; they do not test the models.</p>
+<pre><code>git clone https://github.com/harctik/kira.ai.git
+cd kira.ai
+python -m venv .venv
+<span># activate the environment, then:</span>
+pip install torch numpy tokenizers datasets tqdm psutil pytest
+python -m pytest tests -v
+
+<span># data, then training (a GPU is strongly advised)</span>
+python prepare_data.py
+python train.py --model-size 15m</code></pre>
+    <p class="note">There is also a <a href="https://github.com/harctik/kira.ai/blob/main/kira_training_colab.ipynb">Colab notebook</a> for training.</p>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <p>Built by Avvari Naga Harthikanand (Harthik), Bangalore.</p>
+    <ul>
+      <li><a href="https://github.com/harctik">GitHub</a></li>
+      <li><a href="https://www.linkedin.com/in/harthik">LinkedIn</a></li>
+      <li><a href="https://github.com/harctik/kira.ai">Source</a></li>
+    </ul>
+  </div>
+</footer>
+
+</body>
+</html>
